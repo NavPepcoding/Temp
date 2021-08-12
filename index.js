@@ -102,38 +102,6 @@ app.get('/users/:id',async function(req,res) {
 
 })
 
-// app.post("/message/send", async function(req, res){
-//     const {from, to, msg,roomID} = req.body;
-
-//     let newMessage = new messages({
-//         roomID,
-//         from,
-//         to,
-//         msg
-//     })
-//     newMessage.save();
-//     const room =await rooms.findById(roomID);
-//     let {read,p1,p2} = room;
-//     read = {
-//         p1 : mongoose.Types.ObjectId(from).equals(p1),
-//         p2 : mongoose.Types.ObjectId(from).equals(p2),
-//     }
-//     await rooms.findOneAndUpdate({_id : roomID},{
-//         read
-//     })
-//     res.json(newMessage);
-
-//     // 'refresh' event to be emitted
-//     const io = ioJS.getInstance()
-//     io.on("connection", (socket) => {
-
-//         socket.to(roomID).emit("refresh", () => {
-//           console.log("msg sent");  
-//         })
-//     })
-
-// })
-
 
 app.get("/message/:roomID", function(req, res) {
     // find room id using p1 and p2
