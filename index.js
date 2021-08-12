@@ -15,17 +15,20 @@ const rooms = require('./models/rooms')
 const cors = require('cors')
 
 io.on('connection', (socket) => {
-    socket.on('join', () => {
-        rooms.find().then(rooms => {
-            rooms.forEach((room) => {
-                socket.join(room._id)
+    socket.on('join', (joinerID) => {
+        rooms.find({ $or: [{ p1: joinerID }, { p2: joinerID }] }).then(async (rooms) => {
+            rooms.map(room => {
+                socket.join(JSON.stringify(room._id));
             })
         })
     })
 
     socket.on('send-message', async (data) => {
-        const { from, to, msg, roomID } = data;
+        const { from, msg, roomID } = data;
+        const roomDoc = await rooms.findById(roomID)
+        let { read, p1, p2 } = roomDoc;
 
+        const to = p1.equals(mongoose.Types.ObjectId(from)) ? p2 : p1;
         let newMessage = new messages({
             roomID,
             from,
@@ -33,8 +36,6 @@ io.on('connection', (socket) => {
             msg
         })
         newMessage.save();
-        const room = await rooms.findById(roomID);
-        let { read, p1, p2 } = room;
         read = {
             p1: mongoose.Types.ObjectId(from).equals(p1),
             p2: mongoose.Types.ObjectId(from).equals(p2),
@@ -42,19 +43,33 @@ io.on('connection', (socket) => {
         await rooms.findOneAndUpdate({ _id: roomID }, {
             read
         })
-        socket.broadcast.to(roomID).emit('get-message', data)
+        socket.to(JSON.stringify(roomID)).emit('get-message', { ...data, to })
     })
 
+    socket.on('update-read', async (data) => {
+        const { roomID, user } = data
+        const room = await rooms.findById(data.roomID);
+        let { p1, read } = room;
+        if (mongoose.Types.ObjectId(user).equals(p1))
+            read = { ...read, p1: true };
+        else read = { ...read, p2: true }
+        await rooms.findOneAndUpdate({
+            _id: roomID
+        }, {
+            read
+        })
+    })
 })
 
 app.use(cors())
 mongoose.connect(process.env.MONGO_DB_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
-    ignoreUndefined: true
+    ignoreUndefined: true,
+    useFindAndModify : true
 })
     .then(() => {
-        console.log("mongoose connected")
+        console.log("DB connected")
     })
     .catch(console.error)
 
@@ -96,9 +111,10 @@ app.get('/users/:id', async function (req, res) {
     const roomList = await rooms.find({ $or: [{ p1: currUserId }, { p2: currUserId }] }).sort({ updatedAt: -1 })
     const roomArrPromise = roomList.map(async (room) => {
         return {
-            roomId: room._id,
+            roomID: room._id,
             email: (await users.findOne().where("_id").equals(room.p1 == currUserId ? room.p2 : room.p1)).email,
             read: room.p1 == currUserId ? room.read.p1 : room.read.p2,
+            _id: (await users.findOne().where("_id").equals(room.p1 == currUserId ? room.p2 : room.p1))._id,
             updatedAt: room.updatedAt
         }
     })
@@ -116,7 +132,6 @@ app.get("/message/:roomID", function (req, res) {
         .sort({ createdAt: 1 })
         .exec(function (err, docs) {
             if (err) {
-                console.error(err)
                 return res.sendStatus(500)
             }
             return res.json(docs);
