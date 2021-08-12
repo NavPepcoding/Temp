@@ -64,6 +64,8 @@ io.on('connection', (socket) => {
                 _id: roomID
             }, {
                 read
+            },{
+                timestamps : false
             })
         }
         catch (err) {
@@ -136,7 +138,11 @@ app.get('/users/:id', async function (req, res) {
             }
         })
         const roomArr = await Promise.all(roomArrPromise)
-        res.json(roomArr)
+        const unread = roomArr.filter(room => room.read === false)
+       unread.sort((a,b) => a.updatedAt>b.updatedAt)
+       const readRooms = roomArr.filter(room=>room.read === true);
+       readRooms.sort((a,b) => a.updatedAt>b.updatedAt)
+        res.json([...unread,...readRooms])
     }
     catch (err) {
         res.sendStatus(500)
