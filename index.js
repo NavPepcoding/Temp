@@ -2,7 +2,11 @@ const express = require("express");
 const users = require("./models/users");
 const app = express();
 const server = require("http").createServer(app);
+const REDIS_PORT = process.env.REDIS_PORT || 2100;
+const redis = require('redis')
 require("dotenv/config");
+
+const rdClient = redis.createClient(REDIS_PORT)
 
 const io = require("socket.io")(server, {
   cors: {
@@ -14,6 +18,37 @@ const mongoose = require("mongoose");
 const messages = require("./models/messages");
 const rooms = require("./models/rooms");
 const cors = require("cors");
+
+function updateCachedRoomMessages(roomID, recentData){
+  const preCached = rdClient.get(`messages:${roomID}`);
+  if(preCached){
+    const data = JSON.parse(preCached);
+    data.push(recentData);
+    rdClient.setex(`messages:${roomID}`, 600, JSON.stringify(data));
+  } else {
+    // fetch messages from database and update cache as there is no pre-exisiting cache
+    setCacheRoomMessages(roomID)
+  }
+}
+
+
+function setCacheRoomMessages(roomID){
+  try {
+    messages
+      .find({ roomID })
+      .sort({ createdAt: 1 })
+      .exec(function (err, docs) {
+        if (err) {
+          return res.sendStatus(500);
+        }
+        // caching messages of roomID as messages:{roomID}
+        rdClient.setex(`messages:${roomID}`, 600, JSON.stringify(docs));
+        return res.json(docs);
+      });
+  } catch (err) {
+    res.sendStatus(500);
+  }
+}
 
 io.on("connection", (socket) => {
   socket.on("join", (joinerID) => {
@@ -41,6 +76,10 @@ io.on("connection", (socket) => {
         msg,
       });
       newMessage.save();
+
+      // updating cache for new message after saving it to DB
+      updateCachedRoomMessages(roomID, newMessage);
+
       read = {
         p1: mongoose.Types.ObjectId(from).equals(p1),
         p2: mongoose.Types.ObjectId(from).equals(p2),
@@ -157,7 +196,31 @@ app.get("/users/:id", async function (req, res) {
   }
 });
 
-app.get("/message/:roomID", function (req, res) {
+function getCachedRoomMessages(res, req, next){
+  try {
+    const { roomID } = req.params;
+    
+    if(!roomID) throw new Error("Invalid roomID.");
+
+    rdClient.get(`messages:${roomID}`, function(err, cachedMessages){
+
+      if(err) throw err;
+      
+      if(cachedMessages === null){
+        next();
+      } else {
+        res.json(JSON.parse(cachedMessages))
+      }
+
+    })
+  } catch (error) {
+    console.error(error)
+    res.sendStatus(500)
+  }
+
+}
+
+app.get("/message/:roomID", getCachedRoomMessages, function (req, res) {
   try {
     const { roomID } = req.params;
     messages
@@ -167,6 +230,9 @@ app.get("/message/:roomID", function (req, res) {
         if (err) {
           return res.sendStatus(500);
         }
+
+        // caching messages of roomID as messages:{roomID}
+        rdClient.setex(`messages:${roomID}`, 600, JSON.stringify(docs));
         return res.json(docs);
       });
   } catch (err) {
